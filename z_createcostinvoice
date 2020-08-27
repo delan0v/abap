@@ -1,0 +1,1150 @@
+FUNCTION z_createcostinvoice.
+*"----------------------------------------------------------------------
+*"*"Lokalny interfejs:
+*"  IMPORTING
+*"     VALUE(I_HEADER) TYPE  ZFI_S_FK_I
+*"     VALUE(IT_MPK) TYPE  ZFI_T_FK_MPK_I OPTIONAL
+*"     VALUE(IT_AUFNR) TYPE  ZFI_T_FK_AUF_I OPTIONAL
+*"     VALUE(IT_LEAS) TYPE  ZFI_T_FK_LEAS_I OPTIONAL
+*"     VALUE(IT_PSP) TYPE  ZFI_T_FK_PSP_I OPTIONAL
+*"     VALUE(IT_VAT) TYPE  ZFI_T_FK_VAT OPTIONAL
+*"     VALUE(IT_ORD) TYPE  ZFI_T_FK_ORD_I OPTIONAL
+*"  EXPORTING
+*"     VALUE(E_RESULT) TYPE  ZFI_S_E
+*"----------------------------------------------------------------------
+  DATA: ls_documentheader     TYPE bapiache09,
+        ls_custom             TYPE bapiacpa09,
+        lv_obj_type           TYPE bapiache09-obj_type,
+        lv_obj_key            TYPE bapiache09-obj_key,
+        lv_obj_sys            TYPE bapiache09-obj_sys,
+
+        lt_currencyamount     TYPE TABLE OF bapiaccr09,
+        lt_currencyamount_tax TYPE TABLE OF bapiaccr09,
+        ls_currencyamount     LIKE LINE OF lt_currencyamount,
+
+        lt_accountpayable     TYPE TABLE OF bapiacap09,
+        ls_accountpayable     LIKE LINE OF lt_accountpayable,
+
+        lt_accountgl          TYPE TABLE OF bapiacgl09,
+        ls_accountgl          LIKE LINE OF lt_accountgl,
+
+        lt_accounttax         TYPE TABLE OF bapiactx09,
+        ls_accounttax         TYPE bapiactx09,
+
+        lt_criteria           TYPE TABLE OF bapiackec9,
+        ls_criteria           TYPE bapiackec9,
+
+        lt_bapireturn         TYPE TABLE OF bapiret2,
+        lt_extension2         TYPE TABLE OF bapiparex,
+        ls_extension2         LIKE LINE OF lt_extension2,
+
+        lt_update_bkpf        TYPE TABLE OF bkpf,
+        lt_update_bseg        TYPE TABLE OF bseg,
+        ls_return             TYPE bapiret2,
+        lt_extensionin        TYPE TABLE OF bapiparex,
+        ls_extension          TYPE bapiparex.
+
+  DATA(zcl_withdraval_reserve) = NEW zsdr171_cl_withdraval_reserve( ).
+
+  DATA: lv_bldat   TYPE bldat,
+        lv_wwert   TYPE datum,
+        lv_reindat TYPE reindat,
+        lv_budat   TYPE budat,
+        lv_vatdate TYPE vatdate,
+        lv_zzdat   TYPE datum,
+        lv_zuonr   TYPE dzuonr.
+
+  DATA: ls_log_data TYPE zibc_if_edi_sdata,
+        lt_log_data TYPE zibc_if_edi_sdata_t.
+
+  DATA: conv      TYPE REF TO cl_abap_conv_out_ce,
+        view      TYPE REF TO cl_abap_view_offlen,
+        buffer1   TYPE xstring,
+        lt_invtab TYPE TABLE OF zinvoice_tab,
+        ls_invtab TYPE zinvoice_tab,
+        lv_name   TYPE name.
+
+  TYPES: BEGIN OF ty_config,
+           acc_num  TYPE posnr_acc,
+           curr_num TYPE posnr_acc,
+           ext      TYPE c LENGTH 8,
+         END OF ty_config .
+
+  DATA: lt_mapper TYPE TABLE OF ty_config,
+        ls_mapper TYPE ty_config.
+
+  conv = cl_abap_conv_out_ce=>create(
+           encoding = 'UTF-8'
+           endian = 'L' ).
+
+  view = cl_abap_view_offlen=>create_legacy_view( i_header ).
+
+  conv->convert_struc( EXPORTING data = i_header
+                                 view = view
+                                 IMPORTING buffer = buffer1 ).
+
+  ls_log_data-name = 'i_header'.
+  ls_log_data-sdata = buffer1.
+  APPEND ls_log_data TO lt_log_data.
+
+  LOOP AT it_mpk INTO DATA(ls_mpk).
+    view = cl_abap_view_offlen=>create_legacy_view( ls_mpk ).
+
+    conv->convert_struc( EXPORTING data = ls_mpk
+                                   view = view
+                                   IMPORTING buffer = buffer1 ).
+
+    ls_log_data-name = 'it_mpk'.
+    ls_log_data-sdata = buffer1.
+    APPEND ls_log_data TO lt_log_data.
+  ENDLOOP.
+
+  LOOP AT it_aufnr INTO DATA(ls_aufnr).
+    view = cl_abap_view_offlen=>create_legacy_view( ls_aufnr ).
+
+    conv->convert_struc( EXPORTING data = ls_aufnr
+                                   view = view
+                                   IMPORTING buffer = buffer1 ).
+
+    ls_log_data-name = 'it_aufnr'.
+    ls_log_data-sdata = buffer1.
+    APPEND ls_log_data TO lt_log_data.
+  ENDLOOP.
+
+  LOOP AT it_leas INTO DATA(ls_leas).
+    view = cl_abap_view_offlen=>create_legacy_view( ls_leas ).
+
+    conv->convert_struc( EXPORTING data = ls_leas
+                                   view = view
+                                   IMPORTING buffer = buffer1 ).
+
+    ls_log_data-name = 'it_leas'.
+    ls_log_data-sdata = buffer1.
+    APPEND ls_log_data TO lt_log_data.
+  ENDLOOP.
+
+  LOOP AT it_psp INTO DATA(ls_psp).
+    view = cl_abap_view_offlen=>create_legacy_view( ls_psp ).
+
+    conv->convert_struc( EXPORTING data = ls_psp
+                                   view = view
+                                   IMPORTING buffer = buffer1 ).
+
+    ls_log_data-name = 'it_psp'.
+    ls_log_data-sdata = buffer1.
+    APPEND ls_log_data TO lt_log_data.
+  ENDLOOP.
+
+  LOOP AT it_ord INTO DATA(ls_ord).
+    view = cl_abap_view_offlen=>create_legacy_view( ls_ord ).
+
+    conv->convert_struc( EXPORTING data = ls_ord
+                                   view = view
+                                   IMPORTING buffer = buffer1 ).
+
+    ls_log_data-name = 'it_ord'.
+    ls_log_data-sdata = buffer1.
+    APPEND ls_log_data TO lt_log_data.
+  ENDLOOP.
+
+  LOOP AT it_vat INTO DATA(ls_vat).
+    view = cl_abap_view_offlen=>create_legacy_view( ls_vat ).
+
+    conv->convert_struc( EXPORTING data = ls_vat
+                                   view = view
+                                   IMPORTING buffer = buffer1 ).
+
+    ls_log_data-name = 'it_vat'.
+    ls_log_data-sdata = buffer1.
+    APPEND ls_log_data TO lt_log_data.
+  ENDLOOP.
+
+
+  IF i_header-bldat IS NOT INITIAL.
+    CONCATENATE i_header-bldat(4) i_header-bldat+5(2) i_header-bldat+8(2) INTO lv_bldat.
+  ENDIF.
+  IF i_header-wwert IS NOT INITIAL.
+    CONCATENATE i_header-wwert(4) i_header-wwert+5(2) i_header-wwert+8(2)  INTO lv_wwert.
+  ENDIF.
+  IF i_header-reindat IS NOT INITIAL.
+    CONCATENATE i_header-reindat(4) i_header-reindat+5(2) i_header-reindat+8(2) INTO lv_reindat.
+  ENDIF.
+  IF i_header-budat IS NOT INITIAL.
+    CONCATENATE i_header-budat(4) i_header-budat+5(2) i_header-budat+8(2) INTO lv_budat.
+  ENDIF.
+  IF i_header-vatdate IS NOT INITIAL.
+    CONCATENATE i_header-vatdate(4) i_header-vatdate+5(2) i_header-vatdate+8(2) INTO lv_vatdate.
+  ENDIF.
+
+  IF i_header-kursf IS NOT INITIAL.
+    CLEAR lv_wwert.
+  ENDIF.
+
+  IF i_header-bschl = ''.
+    i_header-bschl = '31'.
+  ENDIF.
+
+
+  ls_documentheader-doc_type = i_header-blart.
+  ls_documentheader-ref_doc_no = i_header-xblnr.
+  ls_documentheader-trans_date = lv_wwert.
+  ls_documentheader-comp_code = i_header-bukrs.
+  ls_documentheader-username = sy-uname.
+  ls_documentheader-pstng_date = lv_budat.
+  ls_documentheader-doc_date = lv_bldat.
+  ls_documentheader-header_txt = i_header-bktxt.
+  ls_documentheader-invoice_rec_date = lv_reindat.
+  ls_documentheader-vatdate = lv_vatdate.
+
+*  IF i_header-waers = 'PLN'.
+  ls_documentheader-doc_status = '2'.
+*  ELSE.
+*    ls_documentheader-doc_status = 'A'.
+*  ENDIF.
+
+  ls_accountpayable-itemno_acc = '1'.
+  ls_accountpayable-comp_code = i_header-bukrs.
+  ls_accountpayable-vendor_no = i_header-lifnr.
+  ls_accountpayable-ref_key_1 = sy-datum.
+  ls_accountpayable-pmnttrms = i_header-zterm.
+  ls_accountpayable-pymt_meth = i_header-zlsch.
+  ls_accountpayable-partner_bk = i_header-bvtyp.
+  ls_accountpayable-pmnt_block = i_header-zlspr.
+  ls_accountpayable-bank_id = i_header-hbkid.
+  ls_accountpayable-housebankacctid = i_header-hktid.
+  ls_accountpayable-item_text = i_header-sgtxt.
+  ls_accountpayable-ref_key_1 = i_header-xref1.
+
+
+  IF i_header-lifnr_a IS NOT INITIAL.
+
+    SELECT SINGLE * FROM lfa1 AS b
+      INNER JOIN lfbk AS a
+      ON a~lifnr = b~lifnr
+      WHERE b~lifnr = @i_header-lifnr_a
+        AND a~bvtyp = @i_header-bvtyp_a
+      INTO @DATA(ls_partner).
+
+    ls_custom-name = ls_partner-b-name1.
+    ls_custom-bank_no = ls_partner-a-bankl.
+    ls_custom-bank_ctry_iso = ls_partner-a-banks.
+    ls_custom-country = ls_partner-b-land1.
+    ls_custom-city = ls_partner-b-ort01.
+    ls_custom-bank_acct = ls_partner-a-bankn.
+    ls_custom-ctrl_key = ls_partner-a-bkont.
+    ls_accountpayable-pmnttrms = i_header-zterm_a.
+    ls_accountpayable-paymt_ref = i_header-kidno.
+
+  ENDIF.
+
+
+  ls_currencyamount-itemno_acc = '1'.
+  ls_currencyamount-exch_rate = i_header-kursf.
+  ls_currencyamount-currency = i_header-waers.
+  ls_currencyamount-curr_type = '00'.
+  IF i_header-rmwwr IS NOT INITIAL.
+    ls_currencyamount-amt_doccur = i_header-rmwwr.
+  ELSE.
+    ls_currencyamount-amt_doccur = ( i_header-wrbtr + i_header-wmwst ).
+  ENDIF.
+  IF i_header-bschl = '31' OR i_header-bschl = '39'.
+    ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur  * -1.
+  ENDIF.
+  APPEND ls_currencyamount TO lt_currencyamount.
+  CLEAR ls_currencyamount.
+
+  IF i_header-rebzg IS NOT INITIAL.
+
+    ls_extension2-structure = 'ACCOUNTPAYABLE'.
+    ls_extension2-valuepart1 = '1'.
+    ls_extension2-valuepart2 = 'C_ACCIT'.
+    ls_extension2-valuepart3 = 'REBZG'.
+    ls_extension2-valuepart4 = i_header-rebzg.
+    APPEND ls_extension2 TO lt_extension2.
+    CLEAR ls_extension2.
+
+    ls_extension2-structure = 'ACCOUNTPAYABLE'.
+    ls_extension2-valuepart1 = '1'.
+    ls_extension2-valuepart2 = 'C_ACCIT'.
+    ls_extension2-valuepart3 = 'REBZZ'.
+    ls_extension2-valuepart4 = '1'.
+    APPEND ls_extension2 TO lt_extension2.
+    CLEAR ls_extension2.
+
+  ENDIF.
+
+  IF i_header-rebzj IS NOT INITIAL.
+
+    ls_extension2-structure = 'ACCOUNTPAYABLE'.
+    ls_extension2-valuepart1 = '1'.
+    ls_extension2-valuepart2 = 'C_ACCIT'.
+    ls_extension2-valuepart3 = 'REBZJ'.
+    ls_extension2-valuepart4 = i_header-rebzj.
+    APPEND ls_extension2 TO lt_extension2.
+    CLEAR ls_extension2.
+  ENDIF.
+
+
+  IF i_header-newum IS NOT INITIAL.
+    DATA: faede TYPE faede.
+    SELECT SINGLE * FROM t052
+      WHERE zterm = @ls_accountpayable-pmnttrms
+      INTO @DATA(ls_term).
+    IF ls_term IS NOT INITIAL.
+
+      IF i_header-bschl = '29'.
+        faede-shkzg = 'H'.
+      ELSEIF i_header-bschl = '39'.
+        faede-shkzg = 'H'.
+*        faede-shkzg = 'S'.
+      ENDIF.
+      faede-koart = 'K'.
+      faede-zbd1t = ls_term-ztag1.
+      IF ls_term-zdart = 'A'.
+        faede-zfbdt = lv_reindat.
+      ELSEIF ls_term-zdart = 'B'.
+        faede-zfbdt = lv_bldat.
+      ELSEIF ls_term-zdart = 'C'.
+        faede-zfbdt = lv_reindat.
+      ELSEIF ls_term-zdart = 'D'.
+        faede-zfbdt = lv_budat.
+      ENDIF.
+
+      CALL FUNCTION 'DETERMINE_DUE_DATE'
+        EXPORTING
+          i_faede                    = faede
+          i_gl_faede                 = 'X'
+        IMPORTING
+          e_faede                    = faede
+        EXCEPTIONS
+          account_type_not_supported = 1
+          OTHERS                     = 2.
+      IF sy-subrc = 0.
+        ls_accountpayable-sp_gl_ind = i_header-newum.
+        ls_accountpayable-bline_date = faede-netdt.
+        CLEAR ls_accountpayable-pmnttrms.
+      ENDIF.
+    ENDIF.
+    CLEAR ls_term.
+  ENDIF.
+
+  APPEND ls_accountpayable TO lt_accountpayable.
+  CLEAR ls_accountpayable.
+
+  DATA: number               TYPE i VALUE 1,
+        number_str           TYPE i VALUE 1,
+        number_str_without_0 TYPE i VALUE 1,
+        cours                TYPE p DECIMALS 4,
+        val                  TYPE string,
+        lv_flag              TYPE boolean VALUE abap_true.
+
+  SORT: it_mpk, it_leas, it_psp, it_vat, it_aufnr, it_ord BY buzei.
+
+  CLEAR: ls_psp, ls_mpk, ls_leas, ls_aufnr, ls_ord.
+  WHILE lv_flag = abap_true.
+
+    READ TABLE it_mpk WITH KEY buzei = number_str INTO ls_mpk.
+    READ TABLE it_aufnr WITH KEY buzei = number_str INTO ls_aufnr.
+    READ TABLE it_leas WITH KEY buzei = number_str INTO ls_leas.
+    READ TABLE it_psp WITH KEY buzei = number_str INTO ls_psp.
+    READ TABLE it_ord WITH KEY buzei = number_str INTO ls_ord.
+    lv_flag = abap_false.
+
+    IF ls_mpk IS NOT INITIAL.
+
+      ls_accountgl-itemno_acc = number + 1.
+      ls_accountgl-tax_code = ls_mpk-mwskz.
+      ls_accountgl-gl_account = ls_mpk-ktonr.
+      ls_accountgl-item_text = ls_mpk-sgtxt.
+      ls_accountgl-costcenter = ls_mpk-kostl.
+      APPEND ls_accountgl TO lt_accountgl.
+
+
+      ls_currencyamount-itemno_acc = number + 1.
+      ls_currencyamount-amt_doccur = ls_mpk-wrbtr.
+      ls_currencyamount-exch_rate = i_header-kursf.
+      ls_currencyamount-currency = i_header-waers.
+      ls_currencyamount-curr_type = '00'.
+      IF ls_mpk-bschl = '50'.
+        ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur  * -1.
+        ls_mpk-wrbtr = ls_mpk-wrbtr * -1.
+      ENDIF.
+
+      READ TABLE it_vat WITH KEY mwskz = ls_mpk-mwskz INTO DATA(ls_vatt).
+      IF ls_vatt-netto IS NOT INITIAL AND ls_vatt-netto_alt IS NOT INITIAL.
+        cours = abs( ls_vat-netto_alt / ls_vat-netto ).
+      ENDIF.
+
+      PERFORM get_taxes USING
+                              ls_accountgl
+                              ls_currencyamount
+                              lt_accounttax
+                              lt_currencyamount_tax
+                              i_header.
+      CLEAR ls_vatt.
+
+      IF ls_mpk-zzcit1 = '3'.
+        ls_currencyamount-amt_doccur = ls_mpk-wrbtr * ( 1 / 4 ).
+        APPEND ls_currencyamount TO lt_currencyamount.
+        IF cours IS NOT INITIAL.
+          ls_currencyamount-curr_type = '10'.
+          ls_currencyamount-currency = 'PLN'.
+          ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur * cours.
+          ls_currencyamount-exch_rate = cours.
+          APPEND ls_currencyamount TO lt_currencyamount.
+        ENDIF.
+        ls_currencyamount-itemno_acc = number + 2.
+        ls_currencyamount-amt_doccur = ls_mpk-wrbtr * ( 3 / 4 ).
+        ls_currencyamount-curr_type = '00'.
+        ls_currencyamount-currency = i_header-waers.
+        ls_accountgl-itemno_acc = number + 2.
+        APPEND ls_accountgl TO lt_accountgl.
+      ENDIF.
+      APPEND ls_currencyamount TO lt_currencyamount.
+      IF cours IS NOT INITIAL.
+        ls_currencyamount-curr_type = '10'.
+        ls_currencyamount-currency = 'PLN'.
+        ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur * cours.
+        ls_currencyamount-exch_rate = cours.
+        APPEND ls_currencyamount TO lt_currencyamount.
+      ENDIF.
+      CLEAR ls_currencyamount.
+      CLEAR ls_accountgl.
+
+      val = number.
+      ls_extension2-structure = 'ACCOUNTGL'.
+      ls_extension2-valuepart1 = val.
+      ls_extension2-valuepart2 = 'C_ACCIT'.
+      ls_extension2-valuepart3 = 'ZZCIT1'.
+      IF ls_mpk-zzcit1 = '3'.
+        ls_extension2-valuepart4 = '2'.
+        APPEND ls_extension2 TO lt_extension2.
+        ls_extension2-valuepart4 = '1'.
+        ls_extension2-valuepart1 = val + 1.
+        SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+      ELSE.
+        ls_extension2-valuepart4 = ls_mpk-zzcit1.
+      ENDIF.
+      APPEND ls_extension2 TO lt_extension2.
+      CLEAR ls_extension2.
+
+      ls_extension2-structure = 'ACCOUNTGL'.
+      ls_extension2-valuepart1 = val.
+      ls_extension2-valuepart2 = 'C_ACCIT'.
+      ls_extension2-valuepart3 = 'ZZBUDZ'.
+      ls_extension2-valuepart4 = ls_mpk-zzbudz.
+      IF ls_mpk-zzcit1 = '3'.
+        APPEND ls_extension2 TO lt_extension2.
+        ls_extension2-valuepart1 = val + 1.
+        SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+      ELSE.
+        ls_extension2-valuepart4 = ls_mpk-zzbudz.
+      ENDIF.
+      APPEND ls_extension2 TO lt_extension2.
+      CLEAR ls_extension2.
+
+      ls_extension2-structure = 'ACCOUNTGL'.
+      ls_extension2-valuepart1 = val.
+      ls_extension2-valuepart2 = 'C_ACCIT'.
+      ls_extension2-valuepart3 = 'ZZCIT2'.
+      ls_extension2-valuepart4 = ls_mpk-zzcit2.
+      IF ls_mpk-zzcit1 = '3'.
+        APPEND ls_extension2 TO lt_extension2.
+        ls_extension2-valuepart1 = val + 1.
+        SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+      ENDIF.
+      APPEND ls_extension2 TO lt_extension2.
+      CLEAR ls_extension2.
+
+      IF ls_mpk-zzrmko IS NOT INITIAL.
+
+        ls_extension2-structure = 'ACCOUNTGL'.
+        ls_extension2-valuepart1 = val.
+        ls_extension2-valuepart2 = 'C_ACCIT'.
+        ls_extension2-valuepart3 = 'ZZRMKO'.
+        CONCATENATE ls_mpk-zzrmko+6(4) ls_mpk-zzrmko+3(2) ls_mpk-zzrmko(2) INTO lv_zzdat.
+        ls_extension2-valuepart4 = lv_zzdat.
+        IF ls_mpk-zzcit1 = '3'.
+          APPEND ls_extension2 TO lt_extension2.
+          ls_extension2-valuepart1 = val + 1.
+          SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+        ENDIF.
+        APPEND ls_extension2 TO lt_extension2.
+        CLEAR: ls_extension2, lv_zzdat.
+
+      ENDIF.
+      IF ls_mpk-zzrmkd IS NOT INITIAL.
+
+        ls_extension2-structure = 'ACCOUNTGL'.
+        ls_extension2-valuepart1 = val.
+        ls_extension2-valuepart2 = 'C_ACCIT'.
+        ls_extension2-valuepart3 = 'ZZRMKD'.
+        CONCATENATE ls_mpk-zzrmkd+6(4) ls_mpk-zzrmkd+3(2) ls_mpk-zzrmkd(2) INTO lv_zzdat.
+        ls_extension2-valuepart4 = lv_zzdat.
+        IF ls_mpk-zzcit1 = '3'.
+          APPEND ls_extension2 TO lt_extension2.
+          ls_extension2-valuepart1 = val + 1.
+          SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+        ENDIF.
+        APPEND ls_extension2 TO lt_extension2.
+        CLEAR: ls_extension2, lv_zzdat.
+      ENDIF.
+      IF ls_mpk-zzcit1 = '3'.
+        number = number + 1.
+      ENDIF.
+      CLEAR: ls_mpk.
+      lv_flag = abap_true.
+    ENDIF.
+
+    IF ls_aufnr IS NOT INITIAL.
+
+      CLEAR lv_zuonr.
+
+      lv_zuonr = zcl_withdraval_reserve->get_zuonr_from_service( is_data = ls_aufnr  ).
+      IF lv_zuonr IS NOT INITIAL.
+        CLEAR ls_aufnr-aufnr.
+      ENDIF.
+
+      ls_accountgl-itemno_acc = number + 1.
+      ls_accountgl-gl_account = ls_aufnr-ktonr.
+      ls_accountgl-item_text = ls_aufnr-sgtxt.
+      ls_accountgl-orderid = ls_aufnr-aufnr.
+      ls_accountgl-tax_code = ls_aufnr-mwskz.
+      ls_accountgl-alloc_nmbr = lv_zuonr.
+      APPEND ls_accountgl TO lt_accountgl.
+
+      ls_currencyamount-itemno_acc = number + 1.
+      ls_currencyamount-amt_doccur = ls_aufnr-wrbtr.
+      ls_currencyamount-currency = i_header-waers.
+      ls_currencyamount-exch_rate = i_header-kursf.
+      ls_currencyamount-curr_type = '00'.
+      IF ls_aufnr-bschl = '50'.
+        ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur  * -1.
+        ls_aufnr-wrbtr = ls_aufnr-wrbtr * -1.
+      ENDIF.
+
+      READ TABLE it_vat WITH KEY mwskz = ls_aufnr-mwskz INTO ls_vatt.
+      IF ls_vatt-netto IS NOT INITIAL AND ls_vatt-netto_alt IS NOT INITIAL.
+        cours = abs( ls_vat-netto_alt / ls_vat-netto ).
+      ENDIF.
+
+      PERFORM get_taxes USING
+                              ls_accountgl
+                              ls_currencyamount
+                              lt_accounttax
+                              lt_currencyamount_tax
+                              i_header.
+      CLEAR ls_vatt.
+      IF ls_aufnr-zzcit1 = '3'.
+        ls_currencyamount-amt_doccur = ls_aufnr-wrbtr * ( 1 / 4 ).
+        APPEND ls_currencyamount TO lt_currencyamount.
+        IF cours IS NOT INITIAL.
+          ls_currencyamount-curr_type = '10'.
+          ls_currencyamount-currency = 'PLN'.
+          ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur * cours.
+          ls_currencyamount-exch_rate = cours.
+          APPEND ls_currencyamount TO lt_currencyamount.
+        ENDIF.
+        ls_currencyamount-itemno_acc = number + 2.
+        ls_currencyamount-amt_doccur = ls_aufnr-wrbtr  * ( 3 / 4 ).
+        ls_currencyamount-curr_type = '00'.
+        ls_currencyamount-currency = i_header-waers.
+        ls_accountgl-itemno_acc = number + 2.
+        ls_accountgl-alloc_nmbr = lv_zuonr.
+        APPEND ls_accountgl TO lt_accountgl.
+      ENDIF.
+      APPEND ls_currencyamount TO lt_currencyamount.
+      IF cours IS NOT INITIAL.
+        ls_currencyamount-curr_type = '10'.
+        ls_currencyamount-currency = 'PLN'.
+        ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur * cours.
+        ls_currencyamount-exch_rate = cours.
+        APPEND ls_currencyamount TO lt_currencyamount.
+      ENDIF.
+      CLEAR ls_currencyamount.
+      CLEAR ls_accountgl.
+
+      val = number.
+      ls_extension2-structure = 'ACCOUNTGL'.
+      ls_extension2-valuepart1 = val.
+      ls_extension2-valuepart2 = 'C_ACCIT'.
+      ls_extension2-valuepart3 = 'ZZCIT1'.
+      ls_extension2-valuepart4 = ls_aufnr-zzcit1.
+      IF ls_aufnr-zzcit1 = '3'.
+        ls_extension2-valuepart4 = '2'.
+        APPEND ls_extension2 TO lt_extension2.
+        ls_extension2-valuepart4 = '1'.
+        ls_extension2-valuepart1 = val + 1.
+        SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+      ELSE.
+        ls_extension2-valuepart4 = ls_aufnr-zzcit1.
+      ENDIF.
+      APPEND ls_extension2 TO lt_extension2.
+      CLEAR ls_extension2.
+
+      ls_extension2-structure = 'ACCOUNTGL'.
+      ls_extension2-valuepart1 = val.
+      ls_extension2-valuepart2 = 'C_ACCIT'.
+      ls_extension2-valuepart3 = 'ZZBUDZ'.
+      ls_extension2-valuepart4 = ls_aufnr-zzbudz.
+      IF ls_aufnr-zzcit1 = '3'.
+        APPEND ls_extension2 TO lt_extension2.
+        ls_extension2-valuepart1 = val + 1.
+        SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+      ELSE.
+        ls_extension2-valuepart4 = ls_aufnr-zzbudz.
+      ENDIF.
+      APPEND ls_extension2 TO lt_extension2.
+      CLEAR ls_extension2.
+
+      ls_extension2-structure = 'ACCOUNTGL'.
+      ls_extension2-valuepart1 = val.
+      ls_extension2-valuepart2 = 'C_ACCIT'.
+      ls_extension2-valuepart3 = 'ZZCIT2'.
+      ls_extension2-valuepart4 = ls_aufnr-zzcit2.
+      ls_extension2-valuepart4 = ls_aufnr-zzcit2.
+      IF ls_aufnr-zzcit1 = '3'.
+        APPEND ls_extension2 TO lt_extension2.
+        ls_extension2-valuepart1 = val + 1.
+        SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+      ENDIF.
+      APPEND ls_extension2 TO lt_extension2.
+      CLEAR ls_extension2.
+      IF ls_aufnr-zzcit1 = '3'.
+        number = number + 1.
+      ENDIF.
+      CLEAR: ls_aufnr.
+      lv_flag = abap_true.
+
+    ENDIF.
+
+    IF ls_leas IS NOT INITIAL.
+
+      ls_accountgl-itemno_acc = number + 1.
+      ls_accountgl-gl_account = ls_leas-ktonr.
+      ls_accountgl-item_text = ls_leas-sgtxt.
+      ls_accountgl-orderid = ls_leas-aufnr.
+      ls_accountgl-tax_code = ls_leas-mwskz.
+      ls_accountgl-costcenter = ls_leas-kostl.
+      APPEND ls_accountgl TO lt_accountgl.
+
+      ls_currencyamount-itemno_acc = number + 1.
+      ls_currencyamount-amt_doccur = ls_leas-wrbtr.
+      ls_currencyamount-exch_rate = i_header-kursf.
+      ls_currencyamount-currency = i_header-waers.
+      ls_currencyamount-curr_type = '00'.
+      IF ls_leas-bschl = '50'.
+        ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur  * -1.
+        ls_leas-wrbtr = ls_leas-wrbtr * -1.
+      ENDIF.
+
+      READ TABLE it_vat WITH KEY mwskz = ls_leas-mwskz INTO ls_vatt.
+      IF ls_vatt-netto IS NOT INITIAL AND ls_vatt-netto_alt IS NOT INITIAL.
+        cours = abs( ls_vat-netto_alt / ls_vat-netto ).
+      ENDIF.
+
+      PERFORM get_taxes USING
+                              ls_accountgl
+                              ls_currencyamount
+                              lt_accounttax
+                              lt_currencyamount_tax
+                              i_header.
+      CLEAR ls_vatt.
+
+      IF ls_leas-zzcit1 = '3'.
+        ls_currencyamount-amt_doccur = ls_leas-wrbtr * ( 1 / 4 ).
+        APPEND ls_currencyamount TO lt_currencyamount.
+        IF cours IS NOT INITIAL.
+          ls_currencyamount-curr_type = '10'.
+          ls_currencyamount-currency = 'PLN'.
+          ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur * cours.
+          ls_currencyamount-exch_rate = cours.
+          APPEND ls_currencyamount TO lt_currencyamount.
+        ENDIF.
+        ls_currencyamount-itemno_acc = number + 2.
+        ls_currencyamount-amt_doccur = ls_leas-wrbtr * ( 3 / 4 ).
+        ls_currencyamount-curr_type = '00'.
+        ls_currencyamount-currency = i_header-waers.
+        ls_accountgl-itemno_acc = number + 2.
+        APPEND ls_accountgl TO lt_accountgl.
+      ENDIF.
+      APPEND ls_currencyamount TO lt_currencyamount.
+      IF cours IS NOT INITIAL.
+        ls_currencyamount-curr_type = '10'.
+        ls_currencyamount-currency = 'PLN'.
+        ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur * cours.
+        ls_currencyamount-exch_rate = cours.
+        APPEND ls_currencyamount TO lt_currencyamount.
+      ENDIF.
+      CLEAR ls_currencyamount.
+      CLEAR ls_accountgl.
+
+      val = number.
+      ls_extension2-structure = 'ACCOUNTGL'.
+      ls_extension2-valuepart1 = val.
+      ls_extension2-valuepart2 = 'C_ACCIT'.
+      ls_extension2-valuepart3 = 'ZZCIT1'.
+      ls_extension2-valuepart4 = ls_leas-zzcit1.
+      IF ls_leas-zzcit1 = '3'.
+        ls_extension2-valuepart4 = '2'.
+        APPEND ls_extension2 TO lt_extension2.
+        ls_extension2-valuepart4 = '1'.
+        ls_extension2-valuepart1 = val + 1.
+        SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+      ELSE.
+        ls_extension2-valuepart4 = ls_leas-zzcit1.
+      ENDIF.
+      APPEND ls_extension2 TO lt_extension2.
+      CLEAR ls_extension2.
+
+      ls_extension2-structure = 'ACCOUNTGL'.
+      ls_extension2-valuepart1 = val.
+      ls_extension2-valuepart2 = 'C_ACCIT'.
+      ls_extension2-valuepart3 = 'ZZCIT2'.
+      ls_extension2-valuepart4 = ls_leas-zzcit2.
+      IF ls_leas-zzcit1 = '3'.
+        APPEND ls_extension2 TO lt_extension2.
+        ls_extension2-valuepart1 = val + 1.
+        SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+      ENDIF.
+      APPEND ls_extension2 TO lt_extension2.
+      CLEAR ls_extension2..
+
+      ls_extension2-structure = 'ACCOUNTGL'.
+      ls_extension2-valuepart1 = val.
+      ls_extension2-valuepart2 = 'C_ACCIT'.
+*      ls_extension2-valuepart3 = 'ZZUMLE'.
+      ls_extension2-valuepart3 = 'ZZLEAS_NR'.
+      ls_extension2-valuepart4 = ls_leas-zzleas_nr.
+      APPEND ls_extension2 TO lt_extension2.
+      CLEAR ls_extension2.
+      IF ls_leas-zzcit1 = '3'.
+        number = number + 1.
+      ENDIF.
+      CLEAR: ls_leas.
+      lv_flag = abap_true.
+    ENDIF.
+
+    IF ls_ord IS NOT INITIAL.
+
+      ls_accountgl-itemno_acc = number + 1.
+      ls_accountgl-gl_account = ls_ord-ktonr.
+      ls_accountgl-item_text = ls_ord-sgtxt.
+*      ls_accountgl-orderid = ls_ord-aufnr.
+      ls_accountgl-tax_code = ls_ord-mwskz.
+      ls_accountgl-alloc_nmbr = ls_ord-zuonr.
+      APPEND ls_accountgl TO lt_accountgl.
+
+      ls_currencyamount-itemno_acc = number + 1.
+      ls_currencyamount-amt_doccur = ls_ord-wrbtr.
+      ls_currencyamount-currency = i_header-waers.
+      ls_currencyamount-exch_rate = i_header-kursf.
+      ls_currencyamount-curr_type = '00'.
+      IF ls_ord-bschl = '50'.
+        ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur  * -1.
+        ls_ord-wrbtr = ls_ord-wrbtr * -1.
+      ENDIF.
+
+      READ TABLE it_vat WITH KEY mwskz = ls_ord-mwskz INTO ls_vatt.
+      IF ls_vatt-netto IS NOT INITIAL AND ls_vatt-netto_alt IS NOT INITIAL.
+        cours = abs( ls_vat-netto_alt / ls_vat-netto ).
+      ENDIF.
+
+      PERFORM get_taxes USING
+                              ls_accountgl
+                              ls_currencyamount
+                              lt_accounttax
+                              lt_currencyamount_tax
+                              i_header.
+      CLEAR ls_vatt.
+*      IF ls_ord-zzcit1 = '3'.
+*        ls_currencyamount-amt_doccur = ls_ord-wrbtr * ( 1 / 4 ).
+*        APPEND ls_currencyamount TO lt_currencyamount.
+*        IF cours IS NOT INITIAL.
+*          ls_currencyamount-curr_type = '10'.
+*          ls_currencyamount-currency = 'PLN'.
+*          ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur * cours.
+*          ls_currencyamount-exch_rate = cours.
+*          APPEND ls_currencyamount TO lt_currencyamount.
+*        ENDIF.
+*        ls_currencyamount-itemno_acc = number + 2.
+*        ls_currencyamount-amt_doccur = ls_ord-wrbtr  * ( 3 / 4 ).
+*        ls_currencyamount-curr_type = '00'.
+*        ls_currencyamount-currency = i_header-waers.
+*        ls_accountgl-itemno_acc = number + 2.
+*        ls_accountgl-alloc_nmbr = lv_zuonr.
+*        APPEND ls_accountgl TO lt_accountgl.
+*      ENDIF.
+      APPEND ls_currencyamount TO lt_currencyamount.
+      IF cours IS NOT INITIAL.
+        ls_currencyamount-curr_type = '10'.
+        ls_currencyamount-currency = 'PLN'.
+        ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur * cours.
+        ls_currencyamount-exch_rate = cours.
+        APPEND ls_currencyamount TO lt_currencyamount.
+      ENDIF.
+      CLEAR ls_currencyamount.
+      CLEAR ls_accountgl.
+
+*      val = number.
+*      ls_extension2-structure = 'ACCOUNTGL'.
+*      ls_extension2-valuepart1 = val.
+*      ls_extension2-valuepart2 = 'C_ACCIT'.
+*      ls_extension2-valuepart3 = 'ZZCIT1'.
+*      ls_extension2-valuepart4 = ls_ord-zzcit1.
+*      IF ls_ord-zzcit1 = '3'.
+*        ls_extension2-valuepart4 = '2'.
+*        APPEND ls_extension2 TO lt_extension2.
+*        ls_extension2-valuepart4 = '1'.
+*        ls_extension2-valuepart1 = val + 1.
+*        SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+*      ELSE.
+*        ls_extension2-valuepart4 = ls_ord-zzcit1.
+*      ENDIF.
+*      APPEND ls_extension2 TO lt_extension2.
+*      CLEAR ls_extension2.
+*
+*      ls_extension2-structure = 'ACCOUNTGL'.
+*      ls_extension2-valuepart1 = val.
+*      ls_extension2-valuepart2 = 'C_ACCIT'.
+*      ls_extension2-valuepart3 = 'ZZCIT2'.
+*      ls_extension2-valuepart4 = ls_ord-zzcit2.
+*      ls_extension2-valuepart4 = ls_ord-zzcit2.
+*      IF ls_ord-zzcit1 = '3'.
+*        APPEND ls_extension2 TO lt_extension2.
+*        ls_extension2-valuepart1 = val + 1.
+*        SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+*      ENDIF.
+*      APPEND ls_extension2 TO lt_extension2.
+*      CLEAR ls_extension2.
+*      IF ls_ord-zzcit1 = '3'.
+*        number = number + 1.
+*      ENDIF.
+*      CLEAR: ls_ord.
+      lv_flag = abap_true.
+
+    ENDIF.
+
+
+    IF ls_psp IS NOT INITIAL.
+
+      ls_accountgl-itemno_acc = number + 1.
+      ls_accountgl-gl_account = ls_psp-ktonr.
+      ls_accountgl-item_text = ls_psp-sgtxt.
+      ls_accountgl-tax_code = ls_psp-mwskz.
+      ls_accountgl-wbs_element = ls_psp-ps_posid.
+      APPEND ls_accountgl TO lt_accountgl.
+
+      ls_currencyamount-itemno_acc = number + 1.
+      ls_currencyamount-amt_doccur = ls_psp-wrbtr.
+      ls_currencyamount-currency = i_header-waers.
+      ls_currencyamount-exch_rate = i_header-kursf.
+      ls_currencyamount-curr_type = '00'.
+      IF ls_psp-bschl = '50'.
+        ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur  * -1.
+        ls_psp-wrbtr = ls_psp-wrbtr * -1.
+      ENDIF.
+
+      READ TABLE it_vat WITH KEY mwskz = ls_psp-mwskz INTO ls_vat.
+      IF ls_vatt-netto IS NOT INITIAL AND ls_vatt-netto_alt IS NOT INITIAL.
+        cours = abs( ls_vat-netto_alt / ls_vat-netto ).
+      ENDIF.
+
+      PERFORM get_taxes USING
+                              ls_accountgl
+                              ls_currencyamount
+                              lt_accounttax
+                              lt_currencyamount_tax
+                              i_header.
+      CLEAR ls_vatt.
+
+      IF ls_psp-zzcit1 = '3'.
+        ls_currencyamount-amt_doccur = ls_psp-wrbtr * ( 1 / 4 ).
+        APPEND ls_currencyamount TO lt_currencyamount.
+        IF cours IS NOT INITIAL.
+          ls_currencyamount-curr_type = '10'.
+          ls_currencyamount-currency = 'PLN'.
+          ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur * cours.
+          ls_currencyamount-exch_rate = cours.
+          APPEND ls_currencyamount TO lt_currencyamount.
+        ENDIF.
+        ls_currencyamount-itemno_acc = number + 2.
+        ls_currencyamount-amt_doccur = ls_psp-wrbtr * ( 3 / 4 ).
+        ls_currencyamount-curr_type = '00'.
+        ls_currencyamount-currency = i_header-waers.
+        ls_accountgl-itemno_acc = number + 2.
+        APPEND ls_accountgl TO lt_accountgl.
+      ENDIF.
+      APPEND ls_currencyamount TO lt_currencyamount.
+      IF cours IS NOT INITIAL.
+        ls_currencyamount-curr_type = '10'.
+        ls_currencyamount-currency = 'PLN'.
+        ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur * cours.
+        ls_currencyamount-exch_rate = cours.
+        APPEND ls_currencyamount TO lt_currencyamount.
+      ENDIF.
+      CLEAR ls_currencyamount.
+      CLEAR ls_accountgl.
+
+      val = number.
+      ls_extension2-structure = 'ACCOUNTGL'.
+      ls_extension2-valuepart1 = val.
+      ls_extension2-valuepart2 = 'C_ACCIT'.
+      ls_extension2-valuepart3 = 'ZZCIT1'.
+      ls_extension2-valuepart4 = ls_psp-zzcit1.
+      IF ls_psp-zzcit1 = '3'.
+        ls_extension2-valuepart4 = '2'.
+        APPEND ls_extension2 TO lt_extension2.
+        ls_extension2-valuepart4 = '1'.
+        ls_extension2-valuepart1 = val + 1.
+        SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+      ELSE.
+        ls_extension2-valuepart4 = ls_psp-zzcit1.
+      ENDIF.
+      APPEND ls_extension2 TO lt_extension2.
+      CLEAR ls_extension2.
+
+      ls_extension2-structure = 'ACCOUNTGL'.
+      ls_extension2-valuepart1 = val.
+      ls_extension2-valuepart2 = 'C_ACCIT'.
+      ls_extension2-valuepart3 = 'ZZCIT2'.
+      ls_extension2-valuepart4 = ls_psp-zzcit2.
+      IF ls_psp-zzcit1 = '3'.
+        ls_extension2-valuepart4 = ls_psp-zzcit2.
+        APPEND ls_extension2 TO lt_extension2.
+        ls_extension2-valuepart1 = val + 1.
+        SHIFT ls_extension2-valuepart1 LEFT DELETING LEADING space .
+      ENDIF.
+      APPEND ls_extension2 TO lt_extension2.
+      CLEAR ls_extension2.
+      IF ls_psp-zzcit1 = '3'.
+        number = number + 1.
+      ENDIF.
+      CLEAR: ls_psp.
+      lv_flag = abap_true.
+    ENDIF.
+
+    number = number + 1.
+    number_str = number_str + 1.
+    CLEAR: ls_psp, ls_mpk, ls_leas, ls_aufnr, ls_ord, cours.
+  ENDWHILE.
+
+  number = lines( lt_currencyamount ).
+  number_str_without_0 = number.
+  number_str = 1.
+
+  LOOP AT lt_currencyamount_tax INTO ls_currencyamount.
+
+    number = number + 1.
+    IF ls_currencyamount-amt_doccur <> 0.
+      number_str_without_0 = number_str_without_0 + 1.
+    ENDIF.
+    READ TABLE lt_accounttax INDEX number_str ASSIGNING FIELD-SYMBOL(<fst>).
+    IF <fst> IS ASSIGNED.
+      IF <fst>-tax_code = 'S5' OR <fst>-tax_code = 'S6' OR <fst>-tax_code = 'S7'.
+        number_str_without_0 = number_str_without_0 - 1.
+      ENDIF.
+      READ TABLE lt_accountgl INTO ls_accountgl WITH KEY itemno_acc = <fst>-itemno_acc.
+      IF ls_accountgl IS NOT INITIAL.
+        IF <fst>-gl_account(1) = '4'.
+
+          CLEAR ls_extension2.
+          ls_extension2-structure = 'ACCOUNTTAX'.
+          ls_extension2-valuepart1 = number_str.
+          CONDENSE ls_extension2-valuepart1.
+          ls_extension2-valuepart2 = 'C_ACCIT'.
+          ls_extension2-valuepart3 = 'KOSTL'.
+          ls_extension2-valuepart4 = ls_accountgl-costcenter.
+          APPEND ls_extension2 TO lt_extension2.
+          CLEAR ls_extension2.
+
+          IF ls_accountgl-costcenter IS NOT INITIAL AND ls_currencyamount-amt_doccur <> 0.
+            CLEAR ls_invtab.
+            ls_invtab-dateof = sy-datum.
+*            ls_invtab-docpoz = <fst>-itemno_acc.   zmiana 11.02
+            ls_invtab-docpoz = number_str_without_0.
+            ls_invtab-mpk = ls_accountgl-costcenter.
+            ls_invtab-usname = sy-uname.
+            APPEND ls_invtab TO lt_invtab.
+            CLEAR ls_invtab.
+          ENDIF.
+        ENDIF.
+        CLEAR ls_accountgl.
+      ENDIF.
+      <fst>-itemno_acc = number.
+
+      number_str = number_str + 1.
+      ls_currencyamount-itemno_acc = number.
+      ls_currencyamount-curr_type = '00'.
+      ls_currencyamount-currency = i_header-waers.
+      APPEND ls_currencyamount TO lt_currencyamount.
+      READ TABLE it_vat WITH KEY mwskz = <fst>-tax_code INTO ls_vat.
+      IF ls_vat-netto IS NOT INITIAL AND ls_vat-netto_alt IS NOT INITIAL.
+        cours = abs( ls_vat-netto_alt / ls_vat-netto ).
+        ls_currencyamount-currency = 'PLN'.
+        ls_currencyamount-curr_type = '10'.
+        ls_currencyamount-exch_rate = abs( cours ).
+        ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur * cours.
+        ls_currencyamount-amt_base = ls_currencyamount-amt_base * cours.
+        APPEND ls_currencyamount TO lt_currencyamount.
+      ENDIF.
+      CLEAR ls_vat.
+      UNASSIGN <fst>.
+    ENDIF.
+  ENDLOOP.
+
+  CLEAR lt_currencyamount_tax.
+
+  DATA: sum_rest TYPE bapidoccur,
+        sum_vat  TYPE bapidoccur,
+        sum_a    TYPE bapidoccur,
+        sum_b    TYPE bapidoccur.
+
+  LOOP AT it_vat INTO ls_vat.
+    sum_vat = 0.
+    CLEAR ls_currencyamount.
+    LOOP AT lt_accounttax INTO ls_accounttax WHERE tax_code = ls_vat-mwskz.
+      LOOP AT lt_currencyamount ASSIGNING FIELD-SYMBOL(<s_currencyamount>) WHERE itemno_acc = ls_accounttax-itemno_acc AND curr_type = '00'.
+        IF <s_currencyamount>-amt_base <> 0.
+          sum_vat = sum_vat + <s_currencyamount>-amt_doccur.
+        ENDIF.
+        IF abs( <s_currencyamount>-amt_doccur ) > abs( ls_currencyamount-amt_doccur ).
+          ls_currencyamount = <s_currencyamount>.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+    READ TABLE lt_currencyamount WITH KEY itemno_acc = ls_currencyamount-itemno_acc ASSIGNING <s_currencyamount>.
+    IF <s_currencyamount> IS ASSIGNED AND  ( abs( sum_vat ) <> abs( ls_vat-vat ) ) AND sum_vat <> 0.
+      IF sum_vat > 0 AND <s_currencyamount>-amt_doccur >= 0.
+        <s_currencyamount>-amt_doccur = <s_currencyamount>-amt_doccur - ( sum_vat - ls_vat-vat ).
+      ELSEIF  sum_vat > 0 AND <s_currencyamount>-amt_doccur < 0.
+        <s_currencyamount>-amt_doccur = <s_currencyamount>-amt_doccur + ( sum_vat - ls_vat-vat ).
+      ELSEIF sum_vat < 0 AND <s_currencyamount>-amt_doccur >= 0.
+        <s_currencyamount>-amt_doccur = <s_currencyamount>-amt_doccur + ( sum_vat - ls_vat-vat ).
+      ELSEIF sum_vat < 0 AND <s_currencyamount>-amt_doccur < 0.
+        <s_currencyamount>-amt_doccur = <s_currencyamount>-amt_doccur - ( sum_vat + ls_vat-vat ).
+      ENDIF.
+      UNASSIGN <s_currencyamount>.
+    ENDIF.
+    sum_vat = 0.
+    CLEAR ls_currencyamount.
+    LOOP AT lt_accounttax INTO ls_accounttax WHERE tax_code = ls_vat-mwskz.
+      LOOP AT lt_currencyamount ASSIGNING <s_currencyamount> WHERE itemno_acc = ls_accounttax-itemno_acc AND curr_type = '10'.
+        IF <s_currencyamount>-amt_base <> 0.
+          sum_vat = sum_vat + <s_currencyamount>-amt_doccur.
+        ENDIF.
+        IF abs( <s_currencyamount>-amt_doccur ) > abs( ls_currencyamount-amt_doccur ).
+          ls_currencyamount = <s_currencyamount>.
+        ENDIF.
+      ENDLOOP.
+    ENDLOOP.
+    READ TABLE lt_currencyamount WITH KEY itemno_acc = ls_currencyamount-itemno_acc ASSIGNING <s_currencyamount>.
+    IF <s_currencyamount> IS ASSIGNED AND  ( abs( sum_vat ) <> abs( ls_vat-vat_alt ) ) AND sum_vat <> 0.
+      IF sum_vat > 0 AND <s_currencyamount>-amt_doccur >= 0.
+        <s_currencyamount>-amt_doccur = <s_currencyamount>-amt_doccur - ( sum_vat - ls_vat-vat_alt ).
+      ELSEIF  sum_vat > 0 AND <s_currencyamount>-amt_doccur < 0.
+        <s_currencyamount>-amt_doccur = <s_currencyamount>-amt_doccur + ( sum_vat - ls_vat-vat_alt ).
+      ELSEIF sum_vat < 0 AND <s_currencyamount>-amt_doccur >= 0.
+        <s_currencyamount>-amt_doccur = <s_currencyamount>-amt_doccur + ( sum_vat - ls_vat-vat_alt ).
+      ELSEIF sum_vat < 0 AND <s_currencyamount>-amt_doccur < 0.
+        <s_currencyamount>-amt_doccur = <s_currencyamount>-amt_doccur - ( sum_vat + ls_vat-vat_alt ).
+      ENDIF.
+      UNASSIGN <s_currencyamount>.
+    ENDIF.
+  ENDLOOP.
+
+  CLEAR ls_currencyamount.
+  READ TABLE lt_currencyamount INDEX 1 INTO ls_currencyamount.
+  ls_currencyamount-amt_doccur = 0.
+  LOOP AT lt_currencyamount ASSIGNING FIELD-SYMBOL(<s_currencyamount2>) WHERE curr_type = '10'.
+    ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur + <s_currencyamount2>-amt_doccur.
+  ENDLOOP.
+  IF ls_currencyamount-amt_doccur IS NOT INITIAL.
+    ls_currencyamount-curr_type = '10'.
+    ls_currencyamount-itemno_acc = 1.
+    ls_currencyamount-currency = 'PLN'.
+    ls_currencyamount-amt_doccur = ls_currencyamount-amt_doccur * -1.
+    APPEND ls_currencyamount TO lt_currencyamount.
+  ENDIF.
+
+  CALL FUNCTION 'BAPI_ACC_DOCUMENT_POST'
+    EXPORTING
+      documentheader = ls_documentheader
+      customercpd    = ls_custom
+    TABLES
+      accountgl      = lt_accountgl
+      accountpayable = lt_accountpayable
+      criteria       = lt_criteria
+      accounttax     = lt_accounttax
+      currencyamount = lt_currencyamount
+      return         = lt_bapireturn
+      extension2     = lt_extension2.
+
+  READ TABLE lt_bapireturn WITH KEY type = 'S' INTO ls_return.
+  IF sy-subrc = 0.
+
+    IF i_header-xref1 IS NOT INITIAL.
+      ls_invtab-dateof = sy-datum.
+      ls_invtab-docpoz = '001'.
+      ls_invtab-usname = sy-uname.
+      ls_invtab-xref1 = i_header-xref1.
+      APPEND ls_invtab TO lt_invtab.
+      CLEAR ls_invtab.
+    ENDIF.
+
+    LOOP AT lt_invtab ASSIGNING FIELD-SYMBOL(<fsi>).
+      <fsi>-docnum = ls_return-message_v2(10).
+      <fsi>-gjahr = ls_return-message_v2+14(4).
+    ENDLOOP.
+    IF lt_invtab IS NOT INITIAL.
+      MODIFY zinvoice_tab FROM TABLE lt_invtab .
+    ENDIF.
+
+    CALL FUNCTION 'BAPI_TRANSACTION_COMMIT'
+      EXPORTING
+        wait = 'X'.
+
+    e_result-line1 = 'errorMessage='.
+    CONCATENATE 'documentKsiNumber=' ls_return-message_v2(18) INTO e_result-line2.
+    e_result-line3 = 'documentSapNumber='.
+    e_result-line4 = 'status=1'.
+    e_result-line5 = 'Assembly Version:1.0.0.139'.
+
+  ELSE.
+
+    CLEAR ls_return.
+    DELETE lt_bapireturn INDEX 1.
+    READ TABLE lt_bapireturn WITH KEY type = 'E' INTO ls_return.
+    CONCATENATE 'erorMessage=' ls_return-message INTO e_result-line1.
+    e_result-line2 = 'documentKsiNumber='.
+    e_result-line3 = 'documentSapNumber='.
+    e_result-line4 = 'status=0'.
+    e_result-line5 = 'Assembly Version:1.0.0.139'.
+
+  ENDIF.
+
+
+  LOOP AT lt_bapireturn INTO ls_return.
+    view = cl_abap_view_offlen=>create_legacy_view( ls_return ).
+
+    conv->convert_struc( EXPORTING data = ls_return
+                                 view = view
+                                 IMPORTING buffer = buffer1 ).
+
+    ls_log_data-name = 'return'.
+    ls_log_data-sdata = buffer1.
+    APPEND ls_log_data TO lt_log_data.
+  ENDLOOP.
+
+  IF lt_log_data IS NOT INITIAL.
+
+    lv_name = 'Z_CREATECOSTINVOICE'.
+
+    CALL FUNCTION 'ZIBC_IF_LOG_MSG'
+      EXPORTING
+        i_inv_log = lt_log_data
+        i_fm_name = lv_name.
+
+  ENDIF.
+
+ENDFUNCTION.
